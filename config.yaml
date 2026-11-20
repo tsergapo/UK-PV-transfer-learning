@@ -1,0 +1,35 @@
+# Settings for the whole project. Paths are relative to this folder.
+
+sites_csv: sites.csv        # the sites to build: column ss_id, and role (source = train, target = held out)
+test_start: "2023-04-02"    # everything from here on is the test period (used for the month check below)
+min_days_per_month: 60      # warn if a site has fewer complete days than this in some month of the year
+max_gap_halfhours: 1        # fill missing daytime PV readings only if the gap is this short
+
+paths:
+  pv_dir: data/raw/uk_pv/30_minutely       # monthly parquet files, all sites
+  metadata_csv: data/raw/uk_pv/metadata.csv
+  era5_csv: ["data/raw/ERA5/*.csv"]        # file names do not matter
+  era5_grib: ["data/raw/ERA5/*.grib"]
+  out_dir: data/processed
+
+# Columns every model may use as input.
+# (The target yield_kwh_per_kwp, generation_kwh and the daylight flag are never inputs.)
+inputs:
+  - ssrd          # solar radiation reaching the ground (W/m2)
+  - fdir          # direct part of it (W/m2)
+  - tcc           # total cloud cover
+  - hcc           # high cloud cover
+  - mcc           # medium cloud cover
+  - lcc           # low cloud cover
+  - t2m_c         # air temperature (Celsius)
+  - u10           # wind, east-west component
+  - v10           # wind, north-south component
+  - ws10          # wind speed
+  - hour_sin
+  - hour_cos
+  - doy_sin
+  - doy_cos
+  - solar_elevation
+  - tilt          # panel angle (site property)
+  - orient_sin    # panel direction (site property)
+  - orient_cos
