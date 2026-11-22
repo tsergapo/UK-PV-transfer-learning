@@ -1,7 +1,9 @@
 # Settings for the whole project. Paths are relative to this folder.
 
 sites_csv: sites.csv        # the sites to build: column ss_id, and role (source = train, target = held out)
-test_start: "2023-04-02"    # everything from here on is the test period (used for the month check below)
+test_start: "2023-04-02"    # THE time boundary: nothing from here on is ever used for training
+val_months: 12              # the last months before test_start are kept for validation while developing
+finetune_months: [1, 3, 12] # how much of a target site's own history (just before test_start) it may use
 min_days_per_month: 60      # warn if a site has fewer complete days than this in some month of the year
 max_gap_halfhours: 1        # fill missing daytime PV readings only if the gap is this short
 

@@ -292,14 +292,20 @@ def add_site_columns(df: pd.DataFrame, site: dict) -> pd.DataFrame:
     return out
 
 
+def complete_days(df: pd.DataFrame) -> pd.Series:
+    """True for every calendar day that has a PV value for every daylight hour.
+    (Night hours never count as missing.) Indexed by day."""
+    ok = df["generation_kwh"].notna() | (df["daylight"] < 0.5)
+    return ok.groupby(df.index.normalize()).all()
+
+
 def month_coverage(df: pd.DataFrame, before: str | None = None) -> pd.Series:
     """Number of COMPLETE days per month of the year (index 1..12) for one site.
-    A complete day has a value for every daylight hour. `before` keeps only earlier rows, e.g. the
-    training period. A site that has no complete day in some month cannot learn that season."""
+    `before` keeps only earlier rows, e.g. the training period. A site that has no complete
+    day in some month cannot learn that season."""
     d = df if before is None else df.loc[: pd.Timestamp(before) - pd.Timedelta(hours=1)]
-    ok = d["generation_kwh"].notna() | (d["daylight"] < 0.5)       # nights never count as missing
-    full_days = ok.groupby(d.index.normalize()).all()
-    return full_days.groupby(full_days.index.month).sum().reindex(range(1, 13), fill_value=0)
+    full = complete_days(d)
+    return full.groupby(full.index.month).sum().reindex(range(1, 13), fill_value=0)
 
 
 # ----------------------------------------------------------------------------------------------
