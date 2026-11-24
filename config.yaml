@@ -5,6 +5,9 @@ test_start: "2023-04-02"    # THE time boundary: nothing from here on is ever us
 val_months: 12              # the last months before test_start are kept for validation while developing
 finetune_months: [1, 3, 12] # how much of a target site's own history (just before test_start) it may use
 min_days_per_month: 60      # warn if a site has fewer complete days than this in some month of the year
+horizon_hours: 24           # a forecast covers one day, 00:00-23:00 UTC
+context_hours: 168          # every scored day needs this much clean history before it, so ALL models
+                            # (also the neural networks that read 168 h of past) are scored on the same days
 max_gap_halfhours: 1        # fill missing daytime PV readings only if the gap is this short
 
 paths:
