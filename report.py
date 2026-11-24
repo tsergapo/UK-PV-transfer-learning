@@ -1,7 +1,7 @@
 """report.py - which differences between settings are real, and which are noise?
 
     python report.py                    (reads results/dev/daily_errors.csv)
-    python report.py --phase final
+    python report.py --dirs results/dev results_lstm/dev      (several runs together)
     python report.py --a xgb/finetune_12m --b xgb/scratch_12m      (one comparison of your own)
 
 With 10 target sites and one year, two settings that differ by 0.003 in RMSE may be equal. This
@@ -32,6 +32,11 @@ DEFAULT_PAIRS = [
     ("xgb/finetune_12m", "xgb/rolling_7d"),
     ("xgb/scratch_12m", "xgb/rolling_7d"),
     ("xgb/rolling_7d", "day_before/none"),
+    ("lstm/zero_shot", "xgb/zero_shot"),
+    ("lstm/zero_shot", "xgb/rolling_7d"),
+    ("lstm/rolling_7d", "xgb/rolling_7d"),
+    ("lstm/finetune_12m", "xgb/finetune_12m"),
+    ("lstm/scratch_12m", "xgb/scratch_12m"),
 ]
 
 
@@ -92,13 +97,13 @@ def compare(d: pd.DataFrame, a: str, b: str, n_boot: int = 2000) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Uncertainty of the experiment's results.")
-    parser.add_argument("--results", default="results")
-    parser.add_argument("--phase", default="dev")
+    parser.add_argument("--dirs", nargs="+", default=["results/dev"], help="folders that hold daily_errors.csv")
     parser.add_argument("--a")
     parser.add_argument("--b")
     parser.add_argument("--boot", type=int, default=2000)
     args = parser.parse_args()
-    daily = pd.read_csv(Path(args.results) / args.phase / "daily_errors.csv", parse_dates=["date"])
+    daily = pd.concat([pd.read_csv(Path(folder) / "daily_errors.csv", parse_dates=["date"]) for folder in args.dirs])
+    daily = daily.drop_duplicates(["model", "setting", "role", "ss_id", "date"])      # the baselines appear in every run
     d = prepare(daily)
 
     keys = sorted(d["key"].unique(), key=lambda k: point(d, k))
@@ -106,7 +111,7 @@ def main() -> None:
     rows = [{"setting": k, "rmse_day": point(d, k),
              "range_if_other_weather": "{:.4f} - {:.4f}".format(*interval(by_day[k])),
              "range_if_other_sites": "{:.4f} - {:.4f}".format(*interval(by_site[k]))} for k in keys]
-    print(f"TARGET sites, {args.phase} run. 95% ranges from {args.boot} resamples.\n")
+    print(f"TARGET sites, runs: {', '.join(args.dirs)}. 95% ranges from {args.boot} resamples.\n")
     print(pd.DataFrame(rows).round(4).to_string(index=False))
 
     pairs = [(args.a, args.b)] if args.a and args.b else DEFAULT_PAIRS

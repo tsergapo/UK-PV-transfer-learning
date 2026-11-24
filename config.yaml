@@ -46,3 +46,14 @@ xgb:
   learning_rate: 0.3
 finetune_trees: 50            # fine-tuning = this many extra trees grown on the target's own data
 finetune_learning_rate: 0.1   # step size of those extra trees
+
+# LSTM settings (only used with  python run.py --models lstm). See lstm.py for what they do.
+lstm:
+  hidden: 64
+  epochs: 40            # at most; training stops earlier when the validation error stops improving
+  patience: 5
+  batch_size: 256
+  lr: 0.002
+  finetune_epochs: 10   # fine-tuning on a target's window: few epochs, small steps
+  finetune_lr: 0.0003
+  seed: 0

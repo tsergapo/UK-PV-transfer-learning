@@ -168,11 +168,14 @@ class RollingFactor:
 
 
 def build_model(name: str, cfg: dict):
-    """A fresh, untrained model by name: 'xgb', 'day_before' or 'linear_ssrd'."""
+    """A fresh, untrained model by name: 'xgb', 'lstm', 'day_before' or 'linear_ssrd'."""
     if name == "xgb":
         return XGBModel(cfg["inputs"], **cfg.get("xgb", {}))
+    if name == "lstm":
+        from lstm import LSTMModel  # torch is only needed when the LSTM is asked for
+        return LSTMModel(cfg["inputs"], **cfg.get("lstm", {}))
     if name == "day_before":
         return DayBefore()
     if name == "linear_ssrd":
         return LinearRadiation()
-    raise ValueError(f"unknown model '{name}' (choose xgb, day_before or linear_ssrd)")
+    raise ValueError(f"unknown model '{name}' (choose xgb, lstm, day_before or linear_ssrd)")

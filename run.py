@@ -4,6 +4,7 @@
     python run.py --final         final run: trained before test_start, scored on the TEST period (do this once,
                                   after everything else is decided)
     python run.py --quick         5 sources and 2 targets, to check that everything works in a minute
+    python run.py --models lstm --out results_lstm      only the LSTM (needs PyTorch; use a GPU)
 
 What it compares, for every target site (sites never trained on), scored on the same days:
 
@@ -37,7 +38,8 @@ from models import FixedFactor, RollingFactor, build_model
 from splits import history_window, make_periods, read_roles, slice_period
 
 
-def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_model, log=print, daily=None):
+def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_model, log=print, daily=None,
+                   model_names=("linear_ssrd", "xgb")):
     """Train and score everything. Returns (per-site table, pooled summary table).
     tables: {ss_id: site table}; cut: first moment that may NOT be trained on;
     score_end: end of the scored period (None = end of data).
@@ -61,7 +63,9 @@ def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_mo
     score("day_before", "none", "target", base, targets)
     score("day_before", "none", "source", base, sources)
 
-    for name in ("linear_ssrd", "xgb"):
+    finetune_args = {"xgb": {"n_trees": cfg.get("finetune_trees", 50),
+                             "learning_rate": cfg.get("finetune_learning_rate", 0.1)}}   # the LSTM reads its own settings
+    for name in model_names:
         log(f"[{time.time() - t0:5.0f}s] {name}: training on {len(sources)} source sites")
         source_model = build(name, cfg).fit(source_frames)
         score(name, "trained_on_sources", "source", source_model, sources)
@@ -75,8 +79,7 @@ def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_mo
                     score(name, f"calibrated_{months}m", "target", FixedFactor(source_model, window), [t])
                     score(name, f"scratch_{months}m", "target", build(name, cfg).fit(window), [t])
                     if hasattr(source_model, "fine_tune"):
-                        tuned = source_model.fine_tune(window, cfg.get("finetune_trees", 50),
-                                                       cfg.get("finetune_learning_rate", 0.1))
+                        tuned = source_model.fine_tune(window, **finetune_args.get(name, {}))
                         score(name, f"finetune_{months}m", "target", tuned, [t])
                 except ValueError as err:          # e.g. no usable row in the window
                     skipped.append((name, t, months, str(err)))
@@ -121,13 +124,17 @@ def main() -> None:
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--final", action="store_true", help="score the TEST period (use once)")
     parser.add_argument("--quick", action="store_true", help="5 sources and 2 targets only")
-    parser.add_argument("--out", default="results")
+    parser.add_argument("--models", nargs="+", default=["linear_ssrd", "xgb"],
+                        choices=["linear_ssrd", "xgb", "lstm"], help="which models to run (day_before always runs)")
+    parser.add_argument("--out", default="results", help="results folder (use another one per set of models)")
     args = parser.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
 
     sources, targets = read_roles(cfg["sites_csv"])
     if args.quick:
         sources, targets = sources[:5], targets[:2]
+    if args.quick and "lstm" in args.models:
+        cfg["lstm"] = {**cfg.get("lstm", {}), "epochs": 3, "finetune_epochs": 2}      # just to see that it runs
     p = make_periods(cfg)
     if args.final:
         phase, cut, score_end = "final", p["test_start"], None
@@ -140,7 +147,8 @@ def main() -> None:
 
     tables = load_tables(cfg, sources + targets)
     daily = []
-    per_site, summary = run_experiment(tables, sources, targets, cfg, cut, score_end, daily=daily)
+    per_site, summary = run_experiment(tables, sources, targets, cfg, cut, score_end, daily=daily,
+                                       model_names=args.models)
 
     out = Path(args.out) / phase / ("quick" if args.quick else "")
     out.mkdir(parents=True, exist_ok=True)
