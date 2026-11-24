@@ -146,7 +146,8 @@ class FixedFactor:
 class RollingFactor:
     """A trained model whose forecasts for each day (00:00-23:00) are multiplied by a number fitted
     on the `hours` BEFORE that day: real output / forecast output. Only the past is used, so this
-    is what could really be done each midnight. Days with less than `hours` of past get NaN."""
+    is what could really be done each midnight. Days with less than `hours` of past get NaN. If the base model made no forecast at all in
+    that past (only possible for models that need their own past), the factor is 1."""
     def __init__(self, base, hours: int = 168, target: str = TARGET, limits=(0.25, 4.0)):
         self.base, self.hours, self.target, self.limits = base, hours, target, limits
         self.name, self.context_hours = f"{base.name}_rolling", max(hours, base.context_hours)
@@ -162,8 +163,10 @@ class RollingFactor:
             if m < self.hours:
                 continue
             real, forecast = sum_y[m] - sum_y[m - self.hours], sum_p[m] - sum_p[m - self.hours]
-            if forecast > 0:
-                out[m:m + 24] = p[m:m + 24] * np.clip(real / forecast, *self.limits)
+            # No forecast in the past week (the LSTM needs its own 168 h of past for every earlier day,
+            # so just after a gap it has none): leave the forecast as it is, factor 1.
+            factor = np.clip(real / forecast, *self.limits) if forecast > 0 else 1.0
+            out[m:m + 24] = p[m:m + 24] * factor
         return pd.Series(out, index=df.index, name=self.name)
 
 
