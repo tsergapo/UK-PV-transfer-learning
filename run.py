@@ -10,6 +10,8 @@ What it compares, for every target site (sites never trained on), scored on the 
     day_before               baseline: yesterday's output at the same hour
     linear_ssrd, xgb
       zero_shot              trained on the 30 source sites only; applied to the target as it is
+      rolling_7d             zero_shot x a factor re-fitted each day on the site's previous 7 days
+      calibrated_<N>m        zero_shot x ONE factor fitted on the target's last N months
       scratch_<N>m           trained on the target's own last N months only (no source sites)
       finetune_<N>m          the source model, then a few more trees grown on the target's last N months
     and, for reference, the models scored on the SOURCE sites in the new period ("trained_on_sources").
@@ -30,7 +32,7 @@ import yaml
 
 from data import load_dataset
 from evaluate import evaluate_sites, metrics
-from models import build_model
+from models import FixedFactor, RollingFactor, build_model
 from splits import history_window, make_periods, read_roles, slice_period
 
 
@@ -40,6 +42,7 @@ def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_mo
     score_end: end of the scored period (None = end of data)."""
     cut = pd.Timestamp(cut)
     months_list = list(cfg.get("finetune_months", [1, 3, 12]))
+    rolling = f"rolling_{cfg.get('context_hours', 168) // 24}d"
     source_frames = [slice_period(tables[i], None, cut) for i in sources]
     parts, pools, skipped = [], {}, []
     t0 = time.time()
@@ -59,11 +62,13 @@ def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_mo
         source_model = build(name, cfg).fit(source_frames)
         score(name, "trained_on_sources", "source", source_model, sources)
         score(name, "zero_shot", "target", source_model, targets)
+        score(name, rolling, "target", RollingFactor(source_model, hours=cfg.get("context_hours", 168)), targets)
         for months in months_list:
             start, _ = history_window(cut, months)
             for t in targets:
                 window = [slice_period(tables[t], start, cut)]
                 try:
+                    score(name, f"calibrated_{months}m", "target", FixedFactor(source_model, window), [t])
                     score(name, f"scratch_{months}m", "target", build(name, cfg).fit(window), [t])
                     if hasattr(source_model, "fine_tune"):
                         tuned = source_model.fine_tune(window, cfg.get("finetune_trees", 50),
@@ -76,10 +81,10 @@ def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_mo
         log(f"  skipped {name} target {t} {months}m: {why}")
 
     per_site = pd.concat(parts, ignore_index=True)
-    return per_site, summarise(per_site, pools, months_list)
+    return per_site, summarise(per_site, pools, months_list, rolling)
 
 
-def summarise(per_site: pd.DataFrame, pools: dict, months_list) -> pd.DataFrame:
+def summarise(per_site: pd.DataFrame, pools: dict, months_list, rolling: str) -> pd.DataFrame:
     """Pooled metrics (all scored hours of all sites of a group together) plus the average of the
     per-site scores, and the skill against the day-before baseline."""
     rows = []
@@ -90,8 +95,8 @@ def summarise(per_site: pd.DataFrame, pools: dict, months_list) -> pd.DataFrame:
     summary = pd.DataFrame(rows)
     reference = summary[summary.model == "day_before"].set_index("role")["rmse_day"]
     summary["skill_vs_day_before"] = 1.0 - summary["rmse_day"] / summary["role"].map(reference)
-    order = ["none", "trained_on_sources", "zero_shot"] + [
-        f"{kind}_{m}m" for m in months_list for kind in ("scratch", "finetune")]
+    order = ["none", "trained_on_sources", "zero_shot", rolling] + [
+        f"{kind}_{m}m" for m in months_list for kind in ("calibrated", "scratch", "finetune")]
     summary["setting"] = pd.Categorical(summary["setting"], order, ordered=True)
     return summary.sort_values(["role", "setting", "model"], ascending=[False, True, True]).reset_index(drop=True)
 

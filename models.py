@@ -12,6 +12,10 @@ The target everywhere is `yield_kwh_per_kwp` (hourly output per installed kWp).
                  `fine_tune` continues an already trained model with a few more trees.
   DayBefore      baseline: the output of the same hour yesterday.
   LinearRadiation baseline: output = one number x solar radiation (ssrd), the number fitted on data.
+  FixedFactor    wraps a trained model; multiplies its forecasts by one number fitted on a site's own
+                 recent window (real output / forecast output).
+  RollingFactor  wraps a trained model; before each forecast day, re-fits that number from the 168
+                 hours before the day. Needs no training window at all.
 
 If a model cannot beat these two, it has learned nothing useful.
 """
@@ -120,6 +124,47 @@ class LinearRadiation:
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
         return (self.slope * df["ssrd"]).clip(lower=0.0).rename(self.name)
+
+
+class FixedFactor:
+    """A trained model whose forecasts are multiplied by one number: total real output divided by
+    total forecast output over `frames` (a window of the site's own past). It corrects a site's
+    scale (orientation, shading, a wrong kWp) but not its shape."""
+    def __init__(self, base, frames: list[pd.DataFrame], target: str = TARGET, limits=(0.25, 4.0)):
+        self.base, self.name, self.context_hours = base, f"{base.name}_calibrated", base.context_hours
+        p = np.concatenate([base.predict(f).to_numpy(dtype="float64") for f in frames])
+        y = np.concatenate([f[target].to_numpy(dtype="float64") for f in frames])
+        ok = np.isfinite(p) & np.isfinite(y)
+        if not ok.any() or p[ok].sum() <= 0:
+            raise ValueError("no usable rows to calibrate on")
+        self.factor = float(np.clip(y[ok].sum() / p[ok].sum(), *limits))   # limits only stop absurd values
+
+    def predict(self, df: pd.DataFrame) -> pd.Series:
+        return (self.base.predict(df) * self.factor).rename(self.name)
+
+
+class RollingFactor:
+    """A trained model whose forecasts for each day (00:00-23:00) are multiplied by a number fitted
+    on the `hours` BEFORE that day: real output / forecast output. Only the past is used, so this
+    is what could really be done each midnight. Days with less than `hours` of past get NaN."""
+    def __init__(self, base, hours: int = 168, target: str = TARGET, limits=(0.25, 4.0)):
+        self.base, self.hours, self.target, self.limits = base, hours, target, limits
+        self.name, self.context_hours = f"{base.name}_rolling", max(hours, base.context_hours)
+
+    def predict(self, df: pd.DataFrame) -> pd.Series:
+        p = self.base.predict(df).to_numpy(dtype="float64")
+        y = df[self.target].to_numpy(dtype="float64")
+        ok = np.isfinite(p) & np.isfinite(y)
+        sum_y = np.concatenate(([0.0], np.cumsum(np.where(ok, y, 0.0))))   # sum_y[k] = sum of rows before k
+        sum_p = np.concatenate(([0.0], np.cumsum(np.where(ok, p, 0.0))))
+        out = np.full(len(df), np.nan)
+        for m in np.flatnonzero(df.index.hour == 0):                       # every midnight
+            if m < self.hours:
+                continue
+            real, forecast = sum_y[m] - sum_y[m - self.hours], sum_p[m] - sum_p[m - self.hours]
+            if forecast > 0:
+                out[m:m + 24] = p[m:m + 24] * np.clip(real / forecast, *self.limits)
+        return pd.Series(out, index=df.index, name=self.name)
 
 
 def build_model(name: str, cfg: dict):
