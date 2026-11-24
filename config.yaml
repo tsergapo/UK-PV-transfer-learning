@@ -35,9 +35,9 @@ inputs:
   - doy_sin
   - doy_cos
   - solar_elevation
-  - tilt          # panel angle (site property)
-  - orient_sin    # panel direction (site property)
-  - orient_cos
+# Site properties are NOT inputs: with tilt and orientation the model learns each training site's
+# scale (they act like a site ID) and transfers worse to new sites. To repeat that comparison, add
+# these three lines back:  tilt, orient_sin, orient_cos
 
 # XGBoost settings. The first three are xgboost's own defaults (what the original notebook used).
 xgb:

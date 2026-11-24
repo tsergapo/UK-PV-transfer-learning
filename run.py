@@ -19,7 +19,8 @@ What it compares, for every target site (sites never trained on), scored on the 
 "Last N months" always ends at the cut: the validation start in a development run, test_start in the
 final run. So nothing the models learn from is later than anything they are scored on.
 
-Writes <out>/<phase>/per_site.csv (one row per model, setting and site) and summary.csv (pooled).
+Writes <out>/<phase>/per_site.csv (one row per model, setting and site), summary.csv (pooled) and
+daily_errors.csv (error sums per site and day, used by report.py to say which differences are real).
 """
 from __future__ import annotations
 
@@ -31,15 +32,16 @@ import pandas as pd
 import yaml
 
 from data import load_dataset
-from evaluate import evaluate_sites, metrics
+from evaluate import daily_errors, evaluate_sites, metrics
 from models import FixedFactor, RollingFactor, build_model
 from splits import history_window, make_periods, read_roles, slice_period
 
 
-def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_model, log=print):
+def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_model, log=print, daily=None):
     """Train and score everything. Returns (per-site table, pooled summary table).
     tables: {ss_id: site table}; cut: first moment that may NOT be trained on;
-    score_end: end of the scored period (None = end of data)."""
+    score_end: end of the scored period (None = end of data).
+    daily: pass an empty list to also collect the per-day error sums (for the bootstrap in report.py)."""
     cut = pd.Timestamp(cut)
     months_list = list(cfg.get("finetune_months", [1, 3, 12]))
     rolling = f"rolling_{cfg.get('context_hours', 168) // 24}d"
@@ -51,6 +53,8 @@ def run_experiment(tables, sources, targets, cfg, cut, score_end, build=build_mo
         per_site, scored = evaluate_sites(model, tables, ids, cut, score_end, cfg)
         parts.append(per_site.reset_index().assign(model=name, setting=setting, role=role))
         pools.setdefault((name, setting, role), []).append(scored)
+        if daily is not None:
+            daily.append(daily_errors(scored).assign(model=name, setting=setting, role=role))
 
     # baseline that learns nothing
     base = build("day_before", cfg)
@@ -135,12 +139,14 @@ def main() -> None:
           f"{len(sources)} sources, {len(targets)} targets")
 
     tables = load_tables(cfg, sources + targets)
-    per_site, summary = run_experiment(tables, sources, targets, cfg, cut, score_end)
+    daily = []
+    per_site, summary = run_experiment(tables, sources, targets, cfg, cut, score_end, daily=daily)
 
     out = Path(args.out) / phase / ("quick" if args.quick else "")
     out.mkdir(parents=True, exist_ok=True)
     per_site.round(5).to_csv(out / "per_site.csv", index=False)
     summary.round(5).to_csv(out / "summary.csv", index=False)
+    pd.concat(daily, ignore_index=True).to_csv(out / "daily_errors.csv", index=False)
     (out / "config_used.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
 
     cols = ["role", "setting", "model", "n_sites", "n_blocks", "rmse_day", "mae_day", "bias_day",

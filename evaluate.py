@@ -71,6 +71,15 @@ def metrics(scored: pd.DataFrame) -> dict:
     return out
 
 
+def daily_errors(scored: pd.DataFrame) -> pd.DataFrame:
+    """Daytime error sums for every site and day: the small table the bootstrap in report.py needs.
+    sse = sum of squared errors, sae = sum of absolute errors, sum_err = sum of (pred - y), n = hours."""
+    day = scored[scored["daylight"]].copy()
+    err = day["pred"] - day["y"]
+    day = day.assign(date=day["block"].dt.normalize(), sse=err ** 2, sae=err.abs(), sum_err=err, n=1)
+    return day.groupby(["ss_id", "date"], as_index=False)[["sse", "sae", "sum_err", "n"]].sum()
+
+
 def evaluate_sites(model, tables: dict[int, pd.DataFrame], ids: list[int], start, end, cfg: dict):
     """Score `model` on the usable blocks of each site in [start, end).
     Returns (per-site table of metrics, all scored hours of all sites with an ss_id column)."""
